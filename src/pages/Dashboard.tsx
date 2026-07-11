@@ -16,7 +16,7 @@ const MOTIVATION = [
 export default function Dashboard() {
   const s = useAppState()
   const today = todayStr()
-  const pool = wordsForScope(s.scope).filter((w) => !s.known[w.id])
+  const pool = wordsForScope(s.scope, s.known)
   const learned = pool.filter((w) => s.cards[w.id]).length
   const due = pool.filter((w) => {
     const c = s.cards[w.id]

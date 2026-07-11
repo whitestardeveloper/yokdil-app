@@ -111,17 +111,38 @@ export const allWords: Word[] = annotated.map((w) =>
 export const coreWords: Word[] = allWords.filter((w) => w.core)
 export const highYieldWords: Word[] = allWords.filter((w) => w.highYield)
 
+// Getiri sırasına dizilmiş uygun kelimeler (Modadil 1080 + Yapılar, günlük kalıplar hariç).
+// Dinamik yüksek-getiri havuzu bunun üstünden "bilinmeyen ilk N" alınarak kurulur:
+// bir kelimeyi "biliyorum" ile çıkarınca 1080'den bir sonraki en iyi kelime otomatik girer.
+export const rankedYieldWords: Word[] = allWords
+  .filter((w) => w.group != null || (w.partCat != null && (!LOW_YIELD_CATS.has(w.partCat) || (w.examCount ?? 0) >= 1)))
+  .sort((a, b) => yieldScore(b) - yieldScore(a))
+
+export const HIGH_YIELD_TARGET = 625
+
+/** Bilinen kelimeler çıkarıldıktan sonra en iyi `target` kelime (dinamik yüksek-getiri). */
+export function highYieldPool(known: Record<string, true>, target = HIGH_YIELD_TARGET): Word[] {
+  const out: Word[] = []
+  for (const w of rankedYieldWords) {
+    if (known[w.id]) continue
+    out.push(w)
+    if (out.length >= target) break
+  }
+  return out
+}
+
 export const wordsById: Record<string, Word> = Object.fromEntries(
   allWords.map((w) => [w.id, w]),
 )
 
 export type StudyScope = 'highyield' | 'modadil' | 'core' | 'all'
 
-/** SRS'in çalışacağı kelime havuzu — kapsam ayarına göre. */
-export function wordsForScope(scope: StudyScope): Word[] {
+/** SRS'in çalışacağı kelime havuzu — kapsam ayarına göre. `known` verilirse
+ *  yüksek-getiri kapsamı dinamik olur (bilinenler çıkar, 1080'den yenisi girer). */
+export function wordsForScope(scope: StudyScope, known: Record<string, true> = {}): Word[] {
   if (scope === 'all') return allWords
   if (scope === 'core') return coreWords
-  if (scope === 'highyield') return highYieldWords
+  if (scope === 'highyield') return highYieldPool(known)
   return allWords.filter((w) => w.sources?.includes('Modadil 1080')) // 'modadil'
 }
 

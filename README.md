@@ -32,7 +32,12 @@ Statik bir SPA — sunucu ayarı gerektirmez (HashRouter kullanır).
 
 **Vercel:** repoyu bağla, framework "Vite" otomatik algılanır. Build komutu `npm run build`, output `dist`.
 
-**Netlify:** Build `npm run build`, publish `dist`.
+**Cihazlar arası kayıt (bulut senkron):** İsteğe bağlı. `api/state.js` bir Vercel serverless fonksiyonudur ve Neon Postgres'e yazar. Kurulum:
+1. Neon'da veritabanı şifreni **sıfırla** (eski URL sohbette açığa çıktı).
+2. Vercel → Settings → Environment Variables → `DATABASE_URL` = yeni Neon bağlantı dizgesi (yalnızca sunucuda; istemciye asla gitmez).
+3. Redeploy et. Uygulamada İlerleme → "Cihazlar arası kayıt"tan kendine bir gizli anahtar belirle; aynı anahtarı diğer cihazlarda da gir.
+
+**Netlify:** Build `npm run build`, publish `dist`. (Bulut senkron için Netlify Functions'a uyarlama gerekir; Vercel önerilir.)
 
 **GitHub Pages / herhangi bir statik host:** `npm run build` sonrası `dist/` klasörünü yükle.
 

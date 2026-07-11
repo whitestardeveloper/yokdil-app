@@ -167,6 +167,50 @@ button { font-family: var(--sans); cursor: pointer; }
 .flow-step .fs-t { font-weight: 700; font-size: 0.9rem; }
 .flow-step .fs-d { font-size: 0.66rem; color: var(--muted); text-align: center; line-height: 1.2; }
 
+/* İlerleme halkası */
+.ring {
+  --p: 0;
+  width: 148px; height: 148px; border-radius: 50%; margin: 6px auto;
+  background: conic-gradient(var(--accent) calc(var(--p) * 1%), var(--accent-soft) 0);
+  display: flex; align-items: center; justify-content: center;
+}
+.ring-in {
+  width: 112px; height: 112px; border-radius: 50%; background: var(--surface);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.ring-pct { font-size: 2rem; font-weight: 800; color: var(--accent-ink); line-height: 1; font-variant-numeric: tabular-nums; }
+.ring-lbl { font-size: 0.72rem; color: var(--muted); }
+
+/* Segment çubuğu */
+.segbar { display: flex; height: 22px; border-radius: 8px; overflow: hidden; gap: 2px; margin: 6px 0 10px; }
+.seg { display: block; }
+.seg-mast { background: var(--good); }
+.seg-learn { background: var(--accent); }
+.seg-hard { background: var(--warn); }
+.seg-new { background: var(--line); }
+.seglegend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.78rem; color: var(--muted); margin-bottom: 8px; }
+.seglegend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.dot-mast { background: var(--good); } .dot-learn { background: var(--accent); }
+.dot-hard { background: var(--warn); } .dot-new { background: var(--line); }
+
+/* 14 gün aktivite */
+.activity { display: flex; align-items: flex-end; gap: 4px; height: 52px; margin-bottom: 8px; }
+.act-col { flex: 1; display: flex; align-items: flex-end; justify-content: center; height: 100%; }
+.act-bar { width: 100%; max-width: 16px; background: var(--accent); border-radius: 4px 4px 0 0; }
+
+/* Kelime işaretleme butonları */
+.wordmarks { display: flex; flex-direction: column; gap: 5px; flex: none; }
+.wordmarks .mk {
+  width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); font-size: 0.95rem; line-height: 1; display: flex;
+  align-items: center; justify-content: center; opacity: 0.55;
+}
+.wordmarks .mk:hover { opacity: 1; border-color: var(--accent); }
+.wordmarks .mk.on { opacity: 1; }
+.wordmarks .mk-known.on { background: var(--good-bg); border-color: var(--good); }
+.wordmarks .mk-learned.on { background: var(--accent-soft); border-color: var(--accent); }
+.wordmarks .mk-hard.on { background: var(--warn-bg); border-color: var(--warn); }
+
 /* Serbest çalışma kartları */
 .study-card {
   display: flex; gap: 14px; align-items: flex-start;

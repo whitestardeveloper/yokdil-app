@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { CardState } from './srs'
+import { review, todayStr } from './srs'
 
 export interface QuizAttempt {
   topicId: string
@@ -39,6 +40,8 @@ export interface AppState {
   planDone: Record<string, boolean> // "YYYY-MM-DD:taskIndex"
   scope: StudyScope // SRS'in hangi kelime havuzundan çalışacağı
   known: Record<string, true> // "zaten biliyorum" ile atlanan kelimeler
+  hard: Record<string, true> // "zor" işaretli / testte bilinemeyen kelimeler
+  _v: number // sürüm damgası (bulut senkron son-yazan-kazanır için)
 }
 
 const KEY = 'yokdil-koc-v1'
@@ -55,6 +58,8 @@ const defaultState: AppState = {
   planDone: {},
   scope: 'highyield',
   known: {},
+  hard: {},
+  _v: 0,
 }
 
 function load(): AppState {
@@ -69,20 +74,38 @@ function load(): AppState {
 
 let state: AppState = load()
 const listeners = new Set<() => void>()
+let onLocalChange: ((s: AppState) => void) | null = null
 
 export function getState(): AppState {
   return state
 }
 
-export function setState(patch: Partial<AppState> | ((s: AppState) => Partial<AppState>)): void {
-  const p = typeof patch === 'function' ? patch(state) : patch
-  state = { ...state, ...p }
+function persist(): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(state))
   } catch {
     // depolama dolu/kapalıysa uygulama bellek-içi çalışmaya devam eder
   }
+}
+
+export function setState(patch: Partial<AppState> | ((s: AppState) => Partial<AppState>)): void {
+  const p = typeof patch === 'function' ? patch(state) : patch
+  state = { ...state, ...p, _v: Date.now() }
+  persist()
   listeners.forEach((l) => l())
+  if (onLocalChange) onLocalChange(state)
+}
+
+/** Bulut senkrondan gelen tüm state'i uygular (dinleyici tetiklemeden yalnızca yerel değişiklik geri-push'u yapılmaz). */
+export function replaceState(next: AppState): void {
+  state = { ...defaultState, ...next }
+  persist()
+  listeners.forEach((l) => l())
+}
+
+/** Bulut senkron modülü yerel değişiklikleri dinlemek için bunu kaydeder. */
+export function setLocalChangeHandler(fn: (s: AppState) => void): void {
+  onLocalChange = fn
 }
 
 function subscribe(l: () => void): () => void {
@@ -121,4 +144,73 @@ export function bestAttempt(s: AppState, topicId: string): QuizAttempt | undefin
   return s.quizAttempts
     .filter((a) => a.topicId === topicId)
     .sort((a, b) => b.correct / b.total - a.correct / a.total)[0]
+}
+
+export type WordState = 'known' | 'hard' | 'mastered' | 'learning' | 'new'
+
+/** Bir kelimenin ilerleme durumu (görsel rozet + öncelik için). */
+export function wordState(s: AppState, id: string): WordState {
+  if (s.known[id]) return 'known'
+  const c = s.cards[id]
+  if (s.hard[id]) return 'hard'
+  if (!c) return 'new'
+  if (c.interval >= 7 && c.reps >= 2) return 'mastered'
+  return 'learning'
+}
+
+// ——— İlerleme aksiyonları ———
+
+export function markKnown(id: string): void {
+  const s = getState()
+  const hard = { ...s.hard }
+  delete hard[id]
+  setState({ known: { ...s.known, [id]: true }, hard })
+}
+
+export function unmarkKnown(id: string): void {
+  const s = getState()
+  const known = { ...s.known }
+  delete known[id]
+  setState({ known })
+}
+
+export function markHard(id: string): void {
+  const s = getState()
+  setState({ hard: { ...s.hard, [id]: true } })
+}
+
+export function unmarkHard(id: string): void {
+  const s = getState()
+  const hard = { ...s.hard }
+  delete hard[id]
+  setState({ hard })
+}
+
+/** "Öğrendim / doğru bildim": kartı ilerlet (yoksa oluştur), zor listesinden çıkar.
+ *  countsAsNew=false ise günlük yeni-kelime kotasını harcamaz (test/işaretleme). */
+export function markLearned(id: string, grade: 3 | 4 | 5 = 4, countsAsNew = false): void {
+  const s = getState()
+  const today = todayStr()
+  const isNew = !s.cards[id]
+  const hard = { ...s.hard }
+  delete hard[id]
+  const newToday = s.newDate === today ? s.newToday : 0
+  setState({
+    cards: { ...s.cards, [id]: review(s.cards[id], grade) },
+    hard,
+    newDate: today,
+    newToday: newToday + (isNew && countsAsNew ? 1 : 0),
+    reviewDates: { ...s.reviewDates, [today]: (s.reviewDates[today] ?? 0) + 1 },
+  })
+}
+
+/** Testte bilinemeyen: zor listesine ekle + SRS'te "tekrar" olarak sıfırla. */
+export function markFailed(id: string): void {
+  const s = getState()
+  const today = todayStr()
+  setState({
+    cards: { ...s.cards, [id]: review(s.cards[id], 0) },
+    hard: { ...s.hard, [id]: true },
+    reviewDates: { ...s.reviewDates, [today]: (s.reviewDates[today] ?? 0) + 1 },
+  })
 }

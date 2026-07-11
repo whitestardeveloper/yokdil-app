@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { allWords, coreWords, wordsForScope, modadilGroups } from '../data'
+import { allWords, coreWords, wordsForScope, modadilGroups, HIGH_YIELD_TARGET, allQuizzes, grammarById } from '../data'
 import type { Word } from '../data/types'
-import { useAppState, setState, getState } from '../lib/store'
+import { useAppState, setState, getState, markKnown, markHard, markLearned, markFailed, unmarkHard, wordState } from '../lib/store'
 import type { StudyScope } from '../lib/store'
 import { review, isDue, todayStr, type Grade } from '../lib/srs'
 import { buildSynGroups } from '../lib/synonyms'
@@ -60,7 +60,7 @@ function downloadCsv(): void {
   URL.revokeObjectURL(url)
 }
 
-type Mode = 'menu' | 'srs' | 'browse' | 'syn' | 'groups' | 'preview' | 'test'
+type Mode = 'menu' | 'srs' | 'browse' | 'syn' | 'groups' | 'preview' | 'test' | 'hard' | 'mixed'
 
 /** Bir kelime listesinden çoktan seçmeli test soruları üretir. */
 function buildTestQuestions(words: Word[], pool: Word[], dir: 'en2tr' | 'tr2en', count: number) {
@@ -108,21 +108,23 @@ function buildQueue(): Word[] {
   const today = todayStr()
   const newToday = s.newDate === today ? s.newToday : 0
   const remainingNew = Math.max(0, s.newPerDay - newToday)
-  const pool = wordsForScope(s.scope)
+  const pool = wordsForScope(s.scope, s.known)
 
+  const hardDue: Word[] = []
   const dueCards: Word[] = []
   const fresh: Word[] = []
   for (const w of pool) {
     if (s.known[w.id]) continue // "biliyorum" ile atlananlar
     const c = s.cards[w.id]
     if (c) {
-      if (isDue(c)) dueCards.push(w)
+      if (isDue(c)) (s.hard[w.id] ? hardDue : dueCards).push(w)
     } else {
       fresh.push(w)
     }
   }
   fresh.sort(priority)
-  return [...dueCards, ...fresh.slice(0, remainingNew)]
+  // Zor kelimeler en önde: öğrenene kadar sürekli karşına gelsinler.
+  return [...hardDue, ...dueCards, ...fresh.slice(0, remainingNew)]
 }
 
 export default function Words() {
@@ -131,11 +133,12 @@ export default function Words() {
 
   const today = todayStr()
   const newToday = s.newDate === today ? s.newToday : 0
-  const pool = wordsForScope(s.scope)
+  const pool = wordsForScope(s.scope, s.known)
   const poolIds = useMemo(() => new Set(pool.map((w) => w.id)), [pool])
-  const activePool = pool.filter((w) => !s.known[w.id]) // biliyorum-hariç
+  const activePool = pool // dinamik kapsam zaten bilinenleri hariç tutuyor
   const learnedInScope = activePool.filter((w) => s.cards[w.id]).length
-  const knownInScope = pool.filter((w) => s.known[w.id]).length
+  const knownInScope = Object.keys(s.known).length
+  const hardCount = activePool.filter((w) => s.hard[w.id]).length
   const due = activePool.filter((w) => {
     const c = s.cards[w.id]
     return c ? isDue(c) : false
@@ -155,6 +158,11 @@ export default function Words() {
     const src = seenSet().length >= 8 ? seenSet() : newSet()
     return <VocabTest words={src} pool={pool} onExit={() => setMode('menu')} />
   }
+  if (mode === 'hard') {
+    const hardWords = allWords.filter((w) => s.hard[w.id])
+    return <Preview words={hardWords} title={`Zor kelimeler (${hardWords.length})`} onExit={() => setMode('menu')} />
+  }
+  if (mode === 'mixed') return <MixedTest onExit={() => setMode('menu')} />
 
   const daysLeft = Math.max(1, Math.ceil((new Date(2026, 7, 9).getTime() - Date.now()) / 86400000))
   const perDayNeeded = Math.ceil((activePool.length - learnedInScope) / daysLeft)
@@ -172,7 +180,7 @@ export default function Words() {
         <h3>🎯 Çalışma kapsamı</h3>
         <div className="scope-grid">
           {SCOPES.map((sc) => {
-            const n = wordsForScope(sc.key).length
+            const n = wordsForScope(sc.key, s.known).length
             const active = s.scope === sc.key
             return (
               <button
@@ -197,8 +205,8 @@ export default function Words() {
       <div className="statrow">
         <div className="stat"><div className="num">{due}</div><div className="lbl">Tekrar bekliyor</div></div>
         <div className="stat"><div className="num">{remainingNew}</div><div className="lbl">Bugün yeni kalan</div></div>
-        <div className="stat"><div className="num">{totalLearned}</div><div className="lbl">Öğrenilen</div></div>
-        <div className="stat"><div className="num">{pool.length.toLocaleString('tr')}</div><div className="lbl">Kapsam</div></div>
+        <div className="stat"><div className="num">{learnedInScope}</div><div className="lbl">Öğrenilen</div></div>
+        <div className="stat"><div className="num" style={{ color: hardCount ? 'var(--warn)' : undefined }}>{hardCount}</div><div className="lbl">Zor ⭐</div></div>
       </div>
 
       {/* Önerilen 3 adımlı akış */}
@@ -235,6 +243,25 @@ export default function Words() {
             Aynı manaya gelen kelimeleri bir arada öğren — şıklar hep bunlardan seçilir.
           </p>
           <button className="btn ghost small" onClick={() => setMode('syn')}>Grupları gör</button>
+        </div>
+      </div>
+
+      <div className="grid2">
+        <div className="card" style={{ borderColor: hardCount ? 'var(--warn)' : undefined }}>
+          <h3>⭐ Zor Kelimeler ({Object.keys(s.hard).length})</h3>
+          <p className="small muted" style={{ marginTop: -6 }}>
+            Testte bilemediğin + elle işaretlediklerin. Öğrenene kadar kartlarda hep önce gelirler.
+          </p>
+          <button className="btn ghost small" onClick={() => setMode('hard')} disabled={Object.keys(s.hard).length === 0}>
+            Zorları çalış
+          </button>
+        </div>
+        <div className="card">
+          <h3>🎲 Karışık Test</h3>
+          <p className="small muted" style={{ marginTop: -6 }}>
+            Öğrendiğin kelime + gramerden karışık — kendini genelden sına.
+          </p>
+          <button className="btn ghost small" onClick={() => setMode('mixed')}>Karışık teste gir</button>
         </div>
       </div>
 
@@ -332,6 +359,21 @@ function GroupStudy({ onExit }: { onExit: () => void }) {
   )
 }
 
+function WordMarks({ id }: { id: string }) {
+  const s = useAppState()
+  const st = wordState(s, id)
+  return (
+    <div className="wordmarks">
+      <button className={`mk mk-known ${st === 'known' ? 'on' : ''}`} title="Biliyorum (listeden çıkar)"
+        onClick={() => markKnown(id)}>✓</button>
+      <button className={`mk mk-learned ${st === 'mastered' || st === 'learning' ? 'on' : ''}`} title="Öğrendim (üzerinden geçtim)"
+        onClick={() => markLearned(id, 4)}>📗</button>
+      <button className={`mk mk-hard ${st === 'hard' ? 'on' : ''}`} title="Zor (öne çıkar)"
+        onClick={() => (s.hard[id] ? unmarkHard(id) : markHard(id))}>⭐</button>
+    </div>
+  )
+}
+
 function Preview({ words, title, onExit }: { words: Word[]; title: string; onExit: () => void }) {
   const [hide, setHide] = useState(false)
   return (
@@ -343,7 +385,9 @@ function Preview({ words, title, onExit }: { words: Word[]; title: string; onExi
           {hide ? 'Anlamları göster' : 'Anlamları gizle'}
         </button>
       </div>
-      <p className="small muted">{words.length} kelime · dokunmadan yukarı kaydırarak oku. {hide && 'Anlamları gizledin — kendini dene.'}</p>
+      <p className="small muted">
+        {words.length} kelime · her kartta: <b>✓</b> biliyorum · <b>📗</b> öğrendim · <b>⭐</b> zor.
+      </p>
       {words.length === 0 && <div className="card"><p className="small muted">Bu kapsamda okunacak yeni kelime kalmadı 👍</p></div>}
       {words.map((w) => (
         <div className="study-card" key={w.id}>
@@ -363,6 +407,7 @@ function Preview({ words, title, onExit }: { words: Word[]; title: string; onExi
               </>
             )}
           </div>
+          <WordMarks id={w.id} />
         </div>
       ))}
     </>
@@ -414,12 +459,12 @@ function VocabTest({ words, pool, onExit }: { words: Word[]; pool: Word[]; onExi
   function pick(i: number) {
     if (picked !== null) return
     setPicked(i)
-    if (i === q.answer) setCorrect((c) => c + 1)
-    else {
+    if (i === q.answer) {
+      setCorrect((c) => c + 1)
+      markLearned(q.word.id, 4) // doğru bildin → kart ilerler, "öğrenildi" sayılır
+    } else {
       setWrong((w) => [...w, q.word])
-      // yanlışı SRS'e "tekrar" olarak işle ki kartlarda sık gelsin
-      const st = getState()
-      setState({ cards: { ...st.cards, [q.word.id]: review(st.cards[q.word.id], 0) } })
+      markFailed(q.word.id) // yanlış → zor listesine + SRS sıfırla
     }
   }
   function next() {
@@ -557,9 +602,8 @@ function SrsSession({ queue, title, onExit, freeReview }: { queue: Word[]; title
   }
 
   /** "Zaten biliyorum": kelimeyi kalıcı olarak kuyruktan çıkar. */
-  function markKnown() {
-    const st = getState()
-    setState({ known: { ...st.known, [word.id]: true } })
+  function skipKnown() {
+    markKnown(word.id)
     advance()
   }
 
@@ -623,7 +667,7 @@ function SrsSession({ queue, title, onExit, freeReview }: { queue: Word[]; title
       {!flipped ? (
         <div className="formrow">
           <button className="btn" style={{ flex: 1 }} onClick={() => setFlipped(true)}>Cevabı göster</button>
-          <button className="btn ghost" style={{ flex: 'none' }} onClick={markKnown} title="2 saniyede aklına geldiyse atla">
+          <button className="btn ghost" style={{ flex: 'none' }} onClick={skipKnown} title="2 saniyede aklına geldiyse atla">
             ✓ Biliyorum
           </button>
         </div>
@@ -634,6 +678,107 @@ function SrsSession({ queue, title, onExit, freeReview }: { queue: Word[]; title
           <button className="g-good" onClick={() => grade(4)}>İyi<span className="sub">bildim</span></button>
           <button className="g-easy" onClick={() => grade(5)}>Kolay<span className="sub">çok kolay</span></button>
         </div>
+      )}
+    </>
+  )
+}
+
+interface MixQ { kind: 'kelime' | 'gramer'; prompt: string; sub: string; emoji: string; options: string[]; answer: number; explanation?: string }
+
+/** Öğrenilen kelime + çalışılan gramerden karışık çoktan seçmeli test. */
+function MixedTest({ onExit }: { onExit: () => void }) {
+  const s0 = getState()
+  const [questions] = useState<MixQ[]>(() => {
+    // Kelime: öğrenilen (kart var) veya zor; yeterli değilse yüksek-getiriden tamamla
+    let vocabSrc = allWords.filter((w) => s0.cards[w.id] || s0.hard[w.id])
+    if (vocabSrc.length < 8) vocabSrc = wordsForScope('highyield', s0.known)
+    const vq = buildTestQuestions(vocabSrc, allWords, 'en2tr', 10).map<MixQ>((q) => ({
+      kind: 'kelime', prompt: q.prompt, sub: 'anlamı hangisi?', emoji: q.word.emoji || '📘',
+      options: q.options, answer: q.answer,
+    }))
+    // Gramer: çalışılan konulardan (yoksa hepsinden)
+    const attempted = new Set(s0.quizAttempts.map((a) => a.topicId))
+    let gpool = allQuizzes.filter((q) => attempted.size === 0 || attempted.has(q.topicId))
+    if (gpool.length < 6) gpool = allQuizzes
+    const gShuffled = [...gpool].sort((a, b) => pseudoRandom(a.id) - pseudoRandom(b.id)).slice(0, 10)
+    const gq = gShuffled.map<MixQ>((q) => ({
+      kind: 'gramer', prompt: q.question, sub: grammarById[q.topicId]?.title || 'gramer',
+      emoji: '🔧', options: q.options, answer: q.answer, explanation: q.explanation,
+    }))
+    return [...vq, ...gq].sort((a, b) => pseudoRandom(a.prompt) - pseudoRandom(b.prompt))
+  })
+  const [idx, setIdx] = useState(0)
+  const [picked, setPicked] = useState<number | null>(null)
+  const [correct, setCorrect] = useState(0)
+
+  if (questions.length < 4) {
+    return (
+      <div className="card">
+        <div className="formrow" style={{ alignItems: 'center' }}>
+          <button className="btn ghost small" onClick={onExit} style={{ flex: 'none' }}>← Geri</button>
+        </div>
+        <p className="small muted">Karışık test için önce biraz kelime çalış ve bir-iki gramer testi çöz.</p>
+      </div>
+    )
+  }
+
+  if (idx >= questions.length) {
+    const pct = Math.round((correct / questions.length) * 100)
+    return (
+      <div className="card" style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: '3rem' }}>{pct >= 80 ? '🏆' : pct >= 60 ? '💪' : '📚'}</div>
+        <h2>{correct}/{questions.length} doğru · %{pct}</h2>
+        <p className="small muted">Karışık test genel seviyeni gösterir. Düşükse zor kelimelere ve yıldızlı konulara dön.</p>
+        <button className="btn" onClick={onExit}>← Geri dön</button>
+      </div>
+    )
+  }
+
+  const q = questions[idx]
+  function pick(i: number) {
+    if (picked !== null) return
+    setPicked(i)
+    if (i === q.answer) setCorrect((c) => c + 1)
+  }
+  function next() {
+    if (idx + 1 < questions.length) { setIdx(idx + 1); setPicked(null) } else setIdx(questions.length)
+  }
+
+  return (
+    <>
+      <div className="formrow" style={{ alignItems: 'center', marginBottom: 8 }}>
+        <button className="btn ghost small" onClick={onExit} style={{ flex: 'none' }}>✕</button>
+        <div className="progress" style={{ flex: 1 }}><div style={{ width: `${(idx / questions.length) * 100}%` }} /></div>
+        <span className="small mono" style={{ flex: 'none' }}>{idx + 1}/{questions.length}</span>
+      </div>
+      <div className="card">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: '1.6rem' }}>{q.emoji}</span>
+          <span className={`pill ${q.kind === 'gramer' ? 'warn' : ''}`}>{q.kind}</span>
+          <span className="small muted">{q.sub}</span>
+        </div>
+        <div className={q.kind === 'gramer' ? 'quiz-q' : ''} style={q.kind === 'kelime' ? { fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-ink)' } : undefined}>
+          {q.prompt}
+        </div>
+      </div>
+      <div className="quiz-opts">
+        {q.options.map((opt, i) => {
+          let cls = 'quiz-opt'
+          if (picked !== null) { if (i === q.answer) cls += ' correct'; else if (i === picked) cls += ' wrong' }
+          return (
+            <button key={i} className={cls} disabled={picked !== null} onClick={() => pick(i)}>
+              <span className="letter">{'ABCDE'[i]}</span><span>{opt}</span>
+            </button>
+          )
+        })}
+      </div>
+      {picked !== null && (
+        <>
+          {q.explanation && <div className="explanation">{picked === q.answer ? '✅ ' : '❌ '}{q.explanation}</div>}
+          <button className="btn" style={{ width: '100%', marginTop: 12 }} onClick={next}>
+            {idx + 1 < questions.length ? 'Sonraki →' : 'Testi bitir'}
+          </button>
+        </>
       )}
     </>
   )
@@ -670,16 +815,17 @@ function Browse({ onExit }: { onExit: () => void }) {
         ))}
       </div>
       <div className="card">
-        <p className="small muted">{filtered.length.toLocaleString('tr')} kelime</p>
-        {filtered.slice(0, 400).map((w) => (
+        <p className="small muted">{filtered.length.toLocaleString('tr')} kelime · işaretle: ✓ biliyorum · 📗 öğrendim · ⭐ zor</p>
+        {filtered.slice(0, 300).map((w) => (
           <div className="wordrow" key={w.id}>
             <span style={{ flex: 'none' }}>{wordEmoji(w)}</span>
             <span className="en">{w.en}</span>
             <span className="tr">{w.tr}</span>
             {w.examCount ? <span className="pill warn" style={{ flex: 'none' }}>{w.examCount}×</span> : null}
+            <WordMarks id={w.id} />
           </div>
         ))}
-        {filtered.length > 400 && <p className="small muted">…ilk 400 gösteriliyor, aramayı daralt.</p>}
+        {filtered.length > 300 && <p className="small muted">…ilk 300 gösteriliyor, aramayı daralt.</p>}
       </div>
     </>
   )

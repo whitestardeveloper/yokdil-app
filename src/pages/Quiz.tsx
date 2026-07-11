@@ -9,7 +9,18 @@ const LETTERS = ['A', 'B', 'C', 'D', 'E']
 export default function Quiz() {
   const { id } = useParams()
   const topic = id ? grammarById[id] : undefined
-  const questions = useMemo(() => (id ? quizzesForTopic(id) : []), [id])
+  // Her girişte soruları karıştır — konuyu tekrar tekrar farklı sırayla çözebilirsin.
+  const [seed, setSeed] = useState(0)
+  const questions = useMemo(() => {
+    const qs = id ? [...quizzesForTopic(id)] : []
+    for (let i = qs.length - 1; i > 0; i--) {
+      let h = 2166136261 ^ seed
+      for (let k = 0; k < qs[i].id.length; k++) { h ^= qs[i].id.charCodeAt(k); h = Math.imul(h, 16777619) }
+      const j = (h >>> 0) % (i + 1)
+      ;[qs[i], qs[j]] = [qs[j], qs[i]]
+    }
+    return qs
+  }, [id, seed])
 
   const [idx, setIdx] = useState(0)
   const [picked, setPicked] = useState<number | null>(null)
@@ -55,6 +66,7 @@ export default function Quiz() {
   }
 
   function restart() {
+    setSeed((x) => x + 1) // yeni karışım
     setIdx(0)
     setPicked(null)
     setCorrect(0)
